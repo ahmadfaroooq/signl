@@ -1,0 +1,629 @@
+// SIGNL Business OS — Prisma Schema
+// All money: original amount + currency + amount_usd + amount_pkr (computed at write)
+// Soft deletes only on financial records (deleted_at)
+// Role-based access enforced at API layer
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  OWNER
+  MANAGER
+  CONTRACTOR
+}
+
+enum Currency {
+  USD
+  PKR
+}
+
+enum CurrencyDisplay {
+  BOTH
+  USD
+  PKR
+}
+
+enum OfferType {
+  AUDIT
+  SYSTEM_BUILD
+  DWY
+  DFY
+}
+
+enum ClientStatus {
+  PROSPECT
+  PROPOSAL_SENT
+  CONTRACT_SIGNED
+  ACTIVE
+  PAUSED
+  COMPLETE
+  CHURNED
+}
+
+enum ReferralPotential {
+  HIGH
+  MEDIUM
+  LOW
+  UNKNOWN
+}
+
+enum RevenueType {
+  MRR
+  PROJECT
+}
+
+enum CostCategory {
+  FIXED
+  VARIABLE
+  ACQUISITION
+}
+
+enum CostInputType {
+  CASH
+  TIME
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+  ONE_TIME
+}
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  IN_DISCUSSION
+  WON
+  LOST
+  GHOSTED
+}
+
+enum LossReason {
+  PRICE
+  TIMING
+  COMPETITOR
+  NO_RESPONSE
+  BUDGET
+  OTHER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum MessageType {
+  COLD
+  WARM
+  REFERRAL
+  FOLLOW_UP
+}
+
+enum ResponseSentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  NO_REPLY
+}
+
+enum CommentQuality {
+  INSIGHT
+  QUESTION
+  VALIDATION
+}
+
+enum PostType {
+  AUTHORITY
+  ENGAGEMENT
+  CONVERSION
+  PERSONAL
+}
+
+enum PostStatus {
+  IDEA
+  DRAFT
+  READY
+  PUBLISHED
+  SKIPPED
+}
+
+enum MagnetType {
+  CHECKLIST
+  MINI_GUIDE
+  TEMPLATE
+  SWIPE_FILE
+  CASE_STUDY
+}
+
+enum MagnetOwnerType {
+  SIGNL
+  CLIENT
+}
+
+enum MagnetStatus {
+  ACTIVE
+  PAUSED
+  RETIRED
+}
+
+enum TestimonialFormat {
+  TEXT
+  VIDEO
+  LINKEDIN_REC
+  VOICE_NOTE
+}
+
+enum TeamRole {
+  DESIGNER
+  WRITER
+  VA
+  MANAGER
+  OTHER
+}
+
+enum EngagementType {
+  PER_PROJECT
+  MONTHLY_RETAINER
+}
+
+enum SopTemplateType {
+  AUDIT
+  SYSTEM_BUILD
+  DWY
+  DFY
+}
+
+enum SopTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETE
+  BLOCKED
+  SKIPPED
+}
+
+// ─── Core Tables ─────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String   @db.VarChar(200)
+  role         Role     @default(OWNER)
+  isActive     Boolean  @default(true) @map("is_active")
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  clients         Client[]
+  revenueEntries  RevenueEntry[]
+  costEntries     CostEntry[]
+  proposals       Proposal[]
+  invoices        Invoice[]
+  outreachDms     OutreachDm[]
+  outreachComments OutreachComment[]
+  contentPosts    ContentPost[]
+  scorecardEntries ScorecardEntry[]
+  sopInstances    SopInstance[]
+  assignedTasks   ProjectTask[]   @relation("TaskAssignee")
+
+  @@map("users")
+}
+
+model Settings {
+  id                   String          @id @default("1")
+  usdPkrRate           Decimal         @map("usd_pkr_rate") @db.Decimal(10, 4)
+  rateUpdatedAt        DateTime        @map("rate_updated_at")
+  hourlyRateUsd        Decimal         @map("hourly_rate_usd") @db.Decimal(8, 2)
+  currencyDisplayDefault CurrencyDisplay @default(BOTH) @map("currency_display_default")
+  businessName         String          @default("SIGNL") @map("business_name") @db.VarChar(200)
+  ownerName            String          @default("Ahmad Farooq") @map("owner_name") @db.VarChar(200)
+  ownerEmail           String          @default("") @map("owner_email") @db.VarChar(255)
+  ownerAddress         String          @default("") @map("owner_address") @db.Text
+  healthThresholds     Json            @default("{\"ltv_cac_warn\": 5, \"margin_warn\": 60, \"scorecard_warn\": 35}") @map("health_thresholds")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ─── Module 4 — Clients CRM ──────────────────────────────────────────────────
+
+model Client {
+  id                      String            @id @default(uuid())
+  fullName                String            @map("full_name") @db.VarChar(200)
+  company                 String?           @map("company") @db.VarChar(200)
+  email                   String            @db.VarChar(255)
+  linkedinUrl             String?           @map("linkedin_url") @db.VarChar(500)
+  whatsapp                String?           @db.VarChar(50)
+  offerType               OfferType         @map("offer_type")
+  status                  ClientStatus      @default(PROSPECT)
+  startDate               DateTime?         @map("start_date") @db.Date
+  endDate                 DateTime?         @map("end_date") @db.Date
+  contractValueAmount     Decimal?          @map("contract_value_amount") @db.Decimal(12, 2)
+  contractValueCurrency   Currency?         @map("contract_value_currency")
+  testimonialCollected    Boolean           @default(false) @map("testimonial_collected")
+  referralPotential       ReferralPotential @default(UNKNOWN) @map("referral_potential")
+  notes                   String?           @db.Text
+  deletedAt               DateTime?         @map("deleted_at")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+  createdBy               String            @map("created_by")
+
+  // Relations
+  creator         User            @relation(fields: [createdBy], references: [id])
+  revenueEntries  RevenueEntry[]
+  costEntries     CostEntry[]
+  proposals       Proposal[]
+  invoices        Invoice[]
+  contracts       Contract[]
+  sopInstances    SopInstance[]
+  testimonials    Testimonial[]
+  leadMagnets     LeadMagnet[]
+  projectTasks    ProjectTask[]
+
+  @@map("clients")
+}
+
+// ─── Module 11 — Revenue ─────────────────────────────────────────────────────
+
+model RevenueEntry {
+  id               String      @id @default(uuid())
+  clientId         String      @map("client_id")
+  offerType        OfferType   @map("offer_type")
+  revenueType      RevenueType @map("revenue_type")
+  amount           Decimal     @db.Decimal(12, 2)
+  currency         Currency
+  exchangeRateUsed Decimal     @map("exchange_rate_used") @db.Decimal(10, 4)
+  amountUsd        Decimal     @map("amount_usd") @db.Decimal(12, 2)
+  amountPkr        Decimal     @map("amount_pkr") @db.Decimal(14, 2)
+  dateReceived     DateTime    @map("date_received") @db.Date
+  invoiceNumber    String?     @map("invoice_number") @db.VarChar(50)
+  isRecurring      Boolean     @default(false) @map("is_recurring")
+  invoiceId        String?     @map("invoice_id")
+  notes            String?     @db.Text
+  deletedAt        DateTime?   @map("deleted_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+  createdBy        String      @map("created_by")
+
+  client  Client   @relation(fields: [clientId], references: [id])
+  creator User     @relation(fields: [createdBy], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@map("revenue_entries")
+}
+
+// ─── Module 12 — Costs ───────────────────────────────────────────────────────
+
+model CostEntry {
+  id              String        @id @default(uuid())
+  name            String        @db.VarChar(300)
+  category        CostCategory
+  costInputType   CostInputType @map("cost_input_type")
+  amount          Decimal?      @db.Decimal(12, 2)
+  currency        Currency?
+  hours           Decimal?      @db.Decimal(6, 2)
+  hourlyRateUsed  Decimal?      @map("hourly_rate_used") @db.Decimal(8, 2)
+  exchangeRateUsed Decimal      @map("exchange_rate_used") @db.Decimal(10, 4)
+  amountUsd       Decimal       @map("amount_usd") @db.Decimal(12, 2)
+  amountPkr       Decimal       @map("amount_pkr") @db.Decimal(14, 2)
+  clientId        String?       @map("client_id")
+  isShared        Boolean       @default(false) @map("is_shared")
+  billingCycle    BillingCycle? @map("billing_cycle")
+  isActive        Boolean       @default(true) @map("is_active")
+  date            DateTime      @db.Date
+  teamMemberId    String?       @map("team_member_id")
+  deletedAt       DateTime?     @map("deleted_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  createdBy       String        @map("created_by")
+
+  client     Client?     @relation(fields: [clientId], references: [id])
+  creator    User        @relation(fields: [createdBy], references: [id])
+  teamMember TeamMember? @relation(fields: [teamMemberId], references: [id])
+
+  @@map("cost_entries")
+}
+
+// ─── Module 3 — Proposals ────────────────────────────────────────────────────
+
+model Proposal {
+  id               String          @id @default(uuid())
+  prospectName     String          @map("prospect_name") @db.VarChar(200)
+  clientId         String?         @map("client_id")
+  offerType        OfferType       @map("offer_type")
+  valueAmount      Decimal         @map("value_amount") @db.Decimal(12, 2)
+  valueCurrency    Currency        @map("value_currency")
+  valueUsd         Decimal         @map("value_usd") @db.Decimal(12, 2)
+  valuePkr         Decimal         @map("value_pkr") @db.Decimal(14, 2)
+  exchangeRateUsed Decimal         @map("exchange_rate_used") @db.Decimal(10, 4)
+  dateSent         DateTime        @map("date_sent") @db.Date
+  followUpDate     DateTime?       @map("follow_up_date") @db.Date
+  status           ProposalStatus  @default(DRAFT)
+  lossReason       LossReason?     @map("loss_reason")
+  notes            String?         @db.Text
+  deletedAt        DateTime?       @map("deleted_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  createdBy        String          @map("created_by")
+
+  client  Client? @relation(fields: [clientId], references: [id])
+  creator User    @relation(fields: [createdBy], references: [id])
+
+  @@map("proposals")
+}
+
+// ─── Module 7 — Invoices ─────────────────────────────────────────────────────
+
+model Invoice {
+  id               String        @id @default(uuid())
+  invoiceNumber    String        @unique @map("invoice_number") @db.VarChar(20)
+  clientId         String        @map("client_id")
+  lineItems        Json          @map("line_items")
+  subtotalAmount   Decimal       @map("subtotal_amount") @db.Decimal(12, 2)
+  currency         Currency
+  amountUsd        Decimal       @map("amount_usd") @db.Decimal(12, 2)
+  amountPkr        Decimal       @map("amount_pkr") @db.Decimal(14, 2)
+  exchangeRateUsed Decimal       @map("exchange_rate_used") @db.Decimal(10, 4)
+  status           InvoiceStatus @default(DRAFT)
+  dueDate          DateTime      @map("due_date") @db.Date
+  paidDate         DateTime?     @map("paid_date") @db.Date
+  autoCreateRevenue Boolean      @default(true) @map("auto_create_revenue")
+  revenueEntryId   String?       @map("revenue_entry_id")
+  notes            String?       @db.Text
+  deletedAt        DateTime?     @map("deleted_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  createdBy        String        @map("created_by")
+
+  client         Client         @relation(fields: [clientId], references: [id])
+  creator        User           @relation(fields: [createdBy], references: [id])
+  revenueEntries RevenueEntry[]
+
+  @@map("invoices")
+}
+
+// ─── Module 6 — Contracts ────────────────────────────────────────────────────
+
+model Contract {
+  id           String    @id @default(uuid())
+  clientId     String    @map("client_id")
+  offerType    OfferType @map("offer_type")
+  templateId   String    @map("template_id")
+  scopeNotes   String?   @map("scope_notes") @db.Text
+  customClauses Json?    @map("custom_clauses")
+  signedAt     DateTime? @map("signed_at")
+  pdfUrl       String?   @map("pdf_url") @db.VarChar(500)
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdBy    String    @map("created_by")
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("contracts")
+}
+
+// ─── Module 5 — SOPs ─────────────────────────────────────────────────────────
+
+model SopTemplate {
+  id          String          @id @default(uuid())
+  name        String          @db.VarChar(200)
+  offerType   SopTemplateType @map("offer_type")
+  description String?         @db.Text
+  tasks       Json            // Array of task definitions with order, phase, title, etc.
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  instances SopInstance[]
+
+  @@map("sop_templates")
+}
+
+model SopInstance {
+  id          String    @id @default(uuid())
+  clientId    String    @map("client_id")
+  templateId  String    @map("template_id")
+  startedAt   DateTime  @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  tasks       Json      // Array of task states: { id, status, completedAt, note, blockedReason, assignedTo }
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdBy   String    @map("created_by")
+
+  client       Client        @relation(fields: [clientId], references: [id])
+  template     SopTemplate   @relation(fields: [templateId], references: [id])
+  creator      User          @relation(fields: [createdBy], references: [id])
+  projectTasks ProjectTask[]
+
+  @@map("sop_instances")
+}
+
+// ─── Project Tasks (proper rows for project manager) ─────────────────────────
+
+model ProjectTask {
+  id           String        @id @default(uuid())
+  sopInstanceId String       @map("sop_instance_id")
+  clientId     String        @map("client_id")
+  title        String        @db.VarChar(300)
+  phase        String        @db.VarChar(100)
+  order        Int
+  status       SopTaskStatus @default(PENDING)
+  assignedTo   String?       @map("assigned_to")   // FK users.id
+  dueDate      DateTime?     @map("due_date") @db.Date
+  completedAt  DateTime?     @map("completed_at")
+  note         String?       @db.Text
+  blockedReason String?      @map("blocked_reason") @db.Text
+  isDecisionPoint Boolean    @default(false) @map("is_decision_point")
+  decisionOutcome String?    @map("decision_outcome") @db.VarChar(200)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  sopInstance  SopInstance   @relation(fields: [sopInstanceId], references: [id])
+  client       Client        @relation(fields: [clientId], references: [id])
+  assignee     User?         @relation("TaskAssignee", fields: [assignedTo], references: [id])
+
+  @@map("project_tasks")
+}
+
+// ─── Module 2 — Outreach ─────────────────────────────────────────────────────
+
+model OutreachDm {
+  id                  String             @id @default(uuid())
+  prospectName        String             @map("prospect_name") @db.VarChar(200)
+  linkedinUrl         String             @map("linkedin_url") @db.VarChar(500)
+  messageType         MessageType        @map("message_type")
+  dateSent            DateTime           @map("date_sent") @db.Date
+  responseReceived    Boolean            @default(false) @map("response_received")
+  responseSentiment   ResponseSentiment? @map("response_sentiment")
+  convertedToProposal Boolean            @default(false) @map("converted_to_proposal")
+  proposalId          String?            @map("proposal_id")
+  notes               String?            @db.Text
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+  createdBy           String             @map("created_by")
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@map("outreach_dms")
+}
+
+model OutreachComment {
+  id                 String         @id @default(uuid())
+  targetAccount      String         @map("target_account") @db.VarChar(200)
+  postTopic          String         @map("post_topic") @db.VarChar(500)
+  date               DateTime       @db.Date
+  commentQuality     CommentQuality @map("comment_quality")
+  profileVisitReceived Boolean      @default(false) @map("profile_visit_received")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  createdBy          String         @map("created_by")
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@map("outreach_comments")
+}
+
+// ─── Module 8 — Content Calendar ─────────────────────────────────────────────
+
+model ContentPost {
+  id              String     @id @default(uuid())
+  hookDraft       String     @map("hook_draft") @db.VarChar(500)
+  postType        PostType   @map("post_type")
+  plannedDate     DateTime   @map("planned_date") @db.Date
+  actualDate      DateTime?  @map("actual_date") @db.Date
+  status          PostStatus @default(IDEA)
+  impressions     Int?
+  engagementRate  Decimal?   @map("engagement_rate") @db.Decimal(5, 2)
+  hasLeadMagnetCta Boolean   @default(false) @map("has_lead_magnet_cta")
+  dmsGenerated    Int?       @map("dms_generated")
+  notes           String?    @db.Text
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  createdBy       String     @map("created_by")
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@map("content_posts")
+}
+
+// ─── Module 9 — Lead Magnets ─────────────────────────────────────────────────
+
+model LeadMagnet {
+  id                    String          @id @default(uuid())
+  name                  String          @db.VarChar(300)
+  type                  MagnetType
+  ownerType             MagnetOwnerType @map("owner_type")
+  linkedClientId        String?         @map("linked_client_id")
+  totalDownloads        Int             @default(0) @map("total_downloads")
+  conversionToCallPct   Decimal?        @map("conversion_to_call_pct") @db.Decimal(5, 2)
+  conversionToClientPct Decimal?        @map("conversion_to_client_pct") @db.Decimal(5, 2)
+  status                MagnetStatus    @default(ACTIVE)
+  lastUpdated           DateTime        @map("last_updated") @db.Date
+  notes                 String?         @db.Text
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+
+  linkedClient Client? @relation(fields: [linkedClientId], references: [id])
+
+  @@map("lead_magnets")
+}
+
+// ─── Module 10 — Testimonials ────────────────────────────────────────────────
+
+model Testimonial {
+  id                  String            @id @default(uuid())
+  clientId            String            @map("client_id")
+  rawQuote            String            @map("raw_quote") @db.Text
+  editedQuote         String?           @map("edited_quote") @db.Text
+  permissionToUse     Boolean           @default(false) @map("permission_to_use")
+  format              TestimonialFormat
+  dateCollected       DateTime          @map("date_collected") @db.Date
+  themes              String[]          // RESULTS | PROCESS | COMMUNICATION | ROI | SPEED
+  usedIn              String[]          @map("used_in") // PROPOSALS | CONTENT | WEBSITE | OUTREACH
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@map("testimonials")
+}
+
+// ─── Module 13 — Team ────────────────────────────────────────────────────────
+
+model TeamMember {
+  id             String         @id @default(uuid())
+  name           String         @db.VarChar(200)
+  role           TeamRole
+  engagementType EngagementType @map("engagement_type")
+  rate           Decimal        @db.Decimal(12, 2)
+  rateCurrency   Currency       @map("rate_currency")
+  isActive       Boolean        @default(true) @map("is_active")
+  skills         String[]       // DESIGN | COPYWRITING | ENGAGEMENT | OUTREACH | STRATEGY
+  contractOnFile Boolean        @default(false) @map("contract_on_file")
+  notes          String?        @db.Text
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  costEntries CostEntry[]
+
+  @@map("team_members")
+}
+
+// ─── Module 14 — Scorecard ───────────────────────────────────────────────────
+
+model ScorecardEntry {
+  id         String   @id @default(uuid())
+  weekOf     DateTime @unique @map("week_of") @db.Date
+  q1         Int      @db.SmallInt // Outreach consistency
+  q2         Int      @db.SmallInt // Content quality
+  q3         Int      @db.SmallInt // Client communication
+  q4         Int      @db.SmallInt // Delivery speed
+  q5         Int      @db.SmallInt // Financial discipline
+  q6         Int      @db.SmallInt // Lead generation
+  q7         Int      @db.SmallInt // Team management
+  q8         Int      @db.SmallInt // Personal energy
+  q9         Int      @db.SmallInt // Strategic clarity
+  q10        Int      @db.SmallInt // Revenue momentum
+  totalScore Int      @map("total_score") @db.SmallInt
+  notes      String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  createdBy  String   @map("created_by")
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@map("scorecard_entries")
+}

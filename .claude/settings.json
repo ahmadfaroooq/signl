@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx prisma migrate dev --name add_project_tasks)",
+      "Bash(ls d:/signl/server/src/types*)",
+      "Bash(npx tsc --noEmit)"
+    ]
+  }
+}
